@@ -1,8 +1,8 @@
 # inline-review.nvim
 
-This is a Neovim plugin inspired by [Roughdraft](https://www.roughdraft.md/) for annotating markdown and text files directly in the editor. It lets you select text and attach comments, propose additions or deletions, or suggest replacements — all stored as lightweight markup in the file itself, making it both human-readable and easy for agents to collaborate on. 
+A Neovim plugin inspired by [Roughdraft](https://www.roughdraft.md/) for annotating markdown and text files directly in the editor. It lets you select text and attach comments, propose additions or deletions, or suggest replacements — all stored as lightweight markup in the file itself, making it both human-readable and easy for agents to collaborate on. 
 
-![Screenshot of Inline Review](assets/inline-review-example.png)
+![Screenshot of Inline Review](assets/images/inline-review-example.png)
 
 ## Installation
 
@@ -15,6 +15,14 @@ This is a Neovim plugin inspired by [Roughdraft](https://www.roughdraft.md/) for
 The default option sets the pane to 45 columns in width and the author name to your OS username, but these can be changed as shown in the [Configuration](#configuration) section.
 
 The plugin is activated on markdown and text files.
+
+### Claude Code
+
+To use this as a skill to review and annotate `.md` and `.txt` files, paste the following in your Claude code session:
+
+```
+Fetch https://github.com/rsmenon/inline-review.nvim/blob/master/assets/skills/inline-review/SKILL.md and install it as a new skill.
+```
 
 ## Annotation types
 
