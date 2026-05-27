@@ -188,20 +188,23 @@ precedence. Override any group after setup or in your colorscheme: >lua
 
     vim.api.nvim_set_hl(0, "InlineReviewComment", { fg = "#a080d0" })
 <
-    Group                        Default          Used for ~
-    `InlineReviewTitle`            bold             Card headers
-    `InlineReviewContents`         Normal           Card body text
-    `InlineReviewMeta`             Comment          Author, timestamps
-    `InlineReviewAddition`         green            Added text
+    Group                        Default            Used for ~
+    `InlineReviewTitle`            bold               Card headers
+    `InlineReviewContents`         Normal             Card body text
+    `InlineReviewMeta`             Comment            Author/timestamp, endmatter
+    `InlineReviewAddition`         green              Added text
     `InlineReviewDeletion`         red/strikethrough  Deleted text
-    `InlineReviewComment`          purple           Commented text
-    `InlineReviewAccept`           blue             [A] action hint
-    `InlineReviewDelete`           orange           [D] action hint
-    `InlineReviewSep`              NonText          Card separators
-    `InlineReviewAction`           Comment          Action labels
-    `InlineReviewActiveCardBg`     CursorLine       Active card background
-    `InlineReviewActiveBorder`     slate            Active card border
-    `InlineReviewInactiveBorder`   NonText          Inactive card border
+    `InlineReviewComment`          purple             Commented/anchored text
+    `InlineReviewAccept`           blue               [A] action hint
+    `InlineReviewDelete`           blue               [D] action hint
+    `InlineReviewReply`            blue               [R] action hint
+    `InlineReviewEdit`             blue               [E] action hint
+    `InlineReviewSep`              NonText            Card separators
+    `InlineReviewAction`           Comment            Action hint labels
+    `InlineReviewActiveCardBg`     CursorLine         Active card background
+    `InlineReviewActiveBorder`     slate              Active card sign column
+    `InlineReviewInactiveBorder`   NonText            Inactive card sign column
+    `InlineReviewPaneBg`           NormalFloat        Review pane background
 
 ==============================================================================
 9. STORAGE FORMAT                                    *inline-review-storage*
