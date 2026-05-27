@@ -21,7 +21,7 @@ The plugin is activated on markdown and text files.
 To use this as a skill to review and annotate `.md` and `.txt` files, paste the following in your Claude code session:
 
 ```
-Fetch https://github.com/rsmenon/inline-review.nvim/blob/master/assets/skills/inline-review/SKILL.md and install it as a new skill.
+Fetch this skill https://github.com/rsmenon/inline-review.nvim/blob/master/assets/skills/inline-review/SKILL.md verbatim and install it globally.
 ```
 
 ## Annotation types
