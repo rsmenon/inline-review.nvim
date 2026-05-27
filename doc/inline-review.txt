@@ -1,0 +1,260 @@
+*inline-review.txt*    Inline annotations for markdown and text files
+
+Author:  inline-review contributors
+License: MIT
+
+==============================================================================
+CONTENTS                                            *inline-review-contents*
+
+    1. Introduction .......................... |inline-review|
+    2. Requirements .......................... |inline-review-requirements|
+    3. Installation .......................... |inline-review-installation|
+    4. Configuration ......................... |inline-review-configuration|
+    5. Usage ................................. |inline-review-usage|
+    6. Annotation types ...................... |inline-review-annotations|
+    7. Keymaps ............................... |inline-review-keymaps|
+    8. Highlight groups ...................... |inline-review-highlights|
+    9. Storage format ........................ |inline-review-storage|
+
+==============================================================================
+1. INTRODUCTION                                              *inline-review*
+
+inline-review.nvim adds review annotations to markdown and text files.
+Select text, attach comments or suggest changes, and manage them from a
+side pane. Annotations are stored inline using CriticMarkup-style syntax,
+with metadata in a YAML endmatter block at the end of the file.
+
+The review pane and source buffer stay in sync: moving the cursor in one
+updates the other. The pane shows each annotation as a card with actions
+for approving, rejecting, editing, and replying.
+
+==============================================================================
+2. REQUIREMENTS                                  *inline-review-requirements*
+
+Neovim >= 0.10
+
+==============================================================================
+3. INSTALLATION                                  *inline-review-installation*
+
+With lazy.nvim: >lua
+
+    {
+      "your-username/inline-review.nvim",
+      config = function()
+        require("inline_review").setup({
+          width  = 45,
+          author = "you",
+        })
+      end,
+    }
+<
+If |inline_review.setup()| is never called, the plugin initializes with
+defaults on |VimEnter|.
+
+==============================================================================
+4. CONFIGURATION                                *inline-review-configuration*
+
+                                                      *inline_review.setup()*
+inline_review.setup({opts})
+
+    Call this from your config to set options. All fields are optional.
+
+    Fields: ~
+
+    {width}     `number`   Review pane width in columns. Default: 45.
+    {author}    `string`   Name stored with each annotation.
+                           Default: OS username.
+    {animate}   `boolean`  Slide-in animation when opening the pane.
+                           Default: false.
+
+    Example: >lua
+
+        require("inline_review").setup({
+          width   = 50,
+          author  = "alice",
+          animate = true,
+        })
+<
+==============================================================================
+5. USAGE                                                *inline-review-usage*
+
+The plugin activates on markdown and text files (|FileType| `markdown`
+and `text`). Annotations are created from visual selections in the source
+buffer and managed in the review pane.
+
+Basic workflow:
+
+    1. Open a markdown or text file.
+    2. Visual-select text.
+    3. Press `<leader>rc` to comment, `<leader>ra` to propose an addition,
+       `<leader>rd` to propose a deletion, or `<leader>rr` to propose a
+       replacement.
+    4. The review pane opens. Navigate cards with `j`/`k`.
+    5. Press `A` to approve a suggestion, `D` to reject/delete, `R` to
+       reply, or `E` to edit a comment body.
+    6. Press `<leader>rp` to toggle the pane.
+
+When a file with existing annotations is opened, the pane opens
+automatically.
+
+INPUT FLOAT ~
+
+Comment, addition, replacement, reply, and edit prompts open a floating
+window near the cursor.
+
+    - `<CR>` in insert mode submits the text.
+    - `<S-CR>` or `<C-j>` inserts a newline for multi-line input.
+    - `<Esc>` or `q` cancels.
+
+==============================================================================
+6. ANNOTATION TYPES                            *inline-review-annotations*
+
+COMMENT                                       *inline-review-comment*
+
+    Visual-select text, press `<leader>rc`, type a comment in the float.
+    The selected text is highlighted as an anchor. The comment body appears
+    in the review pane. Use `D` to delete or `E` to edit.
+
+ADDITION                                      *inline-review-addition*
+
+    Visual-select a location, press `<leader>ra`, type the proposed text.
+    Shown in green. Use `A` to approve (inserts the text) or `D` to
+    reject (removes the markup).
+
+DELETION                                      *inline-review-deletion*
+
+    Visual-select text, press `<leader>rd`. No input prompt. The selected
+    text is marked for deletion with strikethrough. Use `A` to approve
+    (removes the text) or `D` to reject (keeps the text).
+
+REPLACEMENT                                   *inline-review-replacement*
+
+    Visual-select text, press `<leader>rr`, type the replacement in the
+    float. The pane shows old and new text. Use `A` to approve (swaps old
+    for new) or `D` to reject (keeps the original).
+
+MULTI-LINE SELECTIONS ~
+                                              *inline-review-multiline*
+
+All four types support multi-line visual selections. Each line in the
+selection is annotated separately under the same ID. The review pane
+shows them as a single card.
+
+For multi-line replacements, the last line carries the replacement markup
+and earlier lines are marked as deletions. On approve, the earlier lines
+lose their selected portions and the last line's old text is replaced.
+
+==============================================================================
+7. KEYMAPS                                          *inline-review-keymaps*
+
+SOURCE BUFFER ~
+                                              *inline-review-source-keymaps*
+
+These mappings are set on markdown and text buffers.
+
+    `<leader>rp`    Toggle review pane.
+    `<leader>rc`    (visual) Comment on selection.
+    `<leader>ra`    (visual) Propose addition.
+    `<leader>rd`    (visual) Propose deletion.
+    `<leader>rr`    (visual) Propose replacement.
+    `gd`            Jump to the review pane card for the annotation
+                    under the cursor.
+    `]r`            Jump to next annotation (wraps around).
+    `[r`            Jump to previous annotation (wraps around).
+
+While the review pane is open, `w`, `b`, and `e` motions skip over
+concealed markup characters.
+
+REVIEW PANE ~
+                                              *inline-review-pane-keymaps*
+
+These mappings are set on the review pane buffer (filetype `inline-review`).
+
+    `j` / `k`       Move between cards and replies.
+    `gd`            Peek source location (keep focus in pane).
+    `<CR>`          Jump to source location.
+    `A`             Approve suggestion (apply the change).
+    `D`             Delete/reject annotation or reply.
+    `E`             Edit comment body.
+    `R`             Reply to comment or suggestion.
+    `u`             Undo in source buffer.
+    `CTRL-R`        Redo in source buffer.
+
+==============================================================================
+8. HIGHLIGHT GROUPS                              *inline-review-highlights*
+
+All groups are defined with `default = true`. Your colorscheme takes
+precedence. Override any group after setup or in your colorscheme: >lua
+
+    vim.api.nvim_set_hl(0, "InlineReviewComment", { fg = "#a080d0" })
+<
+    Group                        Default          Used for ~
+    `InlineReviewTitle`            bold             Card headers
+    `InlineReviewContents`         Normal           Card body text
+    `InlineReviewMeta`             Comment          Author, timestamps
+    `InlineReviewAddition`         green            Added text
+    `InlineReviewDeletion`         red/strikethrough  Deleted text
+    `InlineReviewComment`          purple           Commented text
+    `InlineReviewAccept`           blue             [A] action hint
+    `InlineReviewDelete`           orange           [D] action hint
+    `InlineReviewSep`              NonText          Card separators
+    `InlineReviewAction`           Comment          Action labels
+    `InlineReviewActiveCardBg`     CursorLine       Active card background
+    `InlineReviewActiveBorder`     slate            Active card border
+    `InlineReviewInactiveBorder`   NonText          Inactive card border
+
+==============================================================================
+9. STORAGE FORMAT                                    *inline-review-storage*
+
+Annotations are stored directly in the file using CriticMarkup delimiters
+with an ID reference. The markup is concealed in normal mode.
+
+INLINE MARKUP ~
+
+    Comment:      `{==anchor==}{>>body<<}{#c1}`
+    Addition:     `{++text++}{#s1}`
+    Deletion:     `{--text--}{#s2}`
+    Replacement:  `{~~old~>new~~}{#s3}`
+
+Comment IDs use the prefix `c` (c1, c2, ...). Suggestion IDs use `s`
+(s1, s2, ...).
+
+Multi-line annotations repeat the ID on each line. Continuation lines
+for comments use `{==anchor==}{#id}` without the body.
+
+ENDMATTER ~
+                                              *inline-review-endmatter*
+
+Metadata is stored in a YAML block at the end of the file, separated by
+`---` preceded by a blank line: >
+
+    ---
+    comments:
+      c1:
+        by: alice
+        at: 2025-01-15T10:30:00.000Z
+    suggestions:
+      s1:
+        by: alice
+        at: 2025-01-15T10:31:00.000Z
+<
+The endmatter is folded out of view while the review pane is open.
+
+REPLIES ~
+
+Replies are comment entries with a `re` field pointing to their parent: >
+
+    comments:
+      c1:
+        by: alice
+        at: 2025-01-15T10:30:00.000Z
+      c2:
+        body: good point
+        by: bob
+        at: 2025-01-15T11:00:00.000Z
+        re: c1
+<
+Nested replies point to the reply they respond to, not the root comment.
+
+==============================================================================
+ vim:tw=78:ts=8:ft=help:norl:
