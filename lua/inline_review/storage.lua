@@ -66,7 +66,8 @@ local function parse_endmatter(lines, sep)
           block_key = k
           block_lines = {}
         else
-          entry[k] = v:match('^"(.*)"$') or v
+          local quoted = v:match('^"(.*)"$')
+          entry[k] = quoted and quoted:gsub('\\(["\\])', "%1") or v
         end
       end
     end
@@ -410,7 +411,8 @@ function M.parse(source_buf)
       else
         local entry = (meta.comments or {})[id] or {}
         local item = {
-          id = id, type = "comment", anchor = anchor, body = "",
+          id = id, type = "comment", anchor = anchor,
+          body = (not entry.re) and entry.body or "",
           by = entry.by, at = entry.at, replies = {},
           start_line = lnum, end_line = lnum, start_col = (s - 1) + 3,
         }
@@ -472,12 +474,18 @@ function M.insert_comment(source_buf, sel, author, body)
   local meta = read_endmatter(source_buf)
   local id = next_comment_id(meta)
 
+  -- Buffer lines cannot contain newlines, so multi-line bodies live in the
+  -- endmatter and the inline markup carries only the anchor.
+  body = body or ""
+  local multiline_body = body:find("\n", 1, true) ~= nil
+  local inline_body = multiline_body and "" or ("{>>" .. body .. "<<}")
+
   if sel.start_line == sel.end_line then
     local lnum, line, sc, ec = line_range(source_buf, sel)
     local anchor = line:sub(sc + 1, ec)
     anchor, sc, ec = trim_formatting(anchor, sc, ec)
     local new_line = line:sub(1, sc)
-      .. "{==" .. anchor .. "==}{>>" .. (body or "") .. "<<}{#" .. id .. "}"
+      .. "{==" .. anchor .. "==}" .. inline_body .. "{#" .. id .. "}"
       .. line:sub(ec + 1)
     vim.api.nvim_buf_set_lines(source_buf, lnum, lnum + 1, false, { new_line })
   else
@@ -492,7 +500,7 @@ function M.insert_comment(source_buf, sel, author, body)
         r.ec = adj_ec
         anchor = r.line:sub(r.sc + 1, r.ec)
         new_line = r.line:sub(1, r.sc)
-          .. "{==" .. anchor .. "==}{>>" .. (body or "") .. "<<}{#" .. id .. "}"
+          .. "{==" .. anchor .. "==}" .. inline_body .. "{#" .. id .. "}"
           .. r.line:sub(r.ec + 1)
       else
         new_line = r.line:sub(1, r.sc)
@@ -504,13 +512,21 @@ function M.insert_comment(source_buf, sel, author, body)
   end
 
   meta.comments[id] = { by = author or "", at = os.date("!%Y-%m-%dT%H:%M:%S.000Z") }
+  if multiline_body then meta.comments[id].body = body end
   write_endmatter(source_buf, meta)
   return id
+end
+
+-- Inline markup lives inside a single buffer line, which cannot contain
+-- newlines; joining with spaces is equivalent within a prose paragraph.
+local function sanitize_inline(text)
+  return (text or ""):gsub("%s*\n%s*", " ")
 end
 
 function M.insert_addition(source_buf, sel, text, author)
   local meta = read_endmatter(source_buf)
   local id = next_suggestion_id(meta)
+  text = sanitize_inline(text)
   local lnum = (sel.cursor_line or sel.end_line) - 1
   local line = vim.api.nvim_buf_get_lines(source_buf, lnum, lnum + 1, false)[1] or ""
   local sc = (sel.cursor_col or sel.end_col) - 1
@@ -550,6 +566,7 @@ end
 function M.insert_replacement(source_buf, sel, new_text, author)
   local meta = read_endmatter(source_buf)
   local id = next_suggestion_id(meta)
+  new_text = sanitize_inline(new_text)
 
   if sel.start_line == sel.end_line then
     local lnum, line, sc, ec = line_range(source_buf, sel)
@@ -583,6 +600,8 @@ end
 
 function M.update_comment_body(source_buf, id, new_body)
   if not vim.api.nvim_buf_is_valid(source_buf) then return false end
+  new_body = new_body or ""
+  local multiline = new_body:find("\n", 1, true) ~= nil
   local lines = vim.api.nvim_buf_get_lines(source_buf, 0, -1, false)
   local sep = util.find_endmatter_sep(lines)
   local content_end = sep and (sep - 1) or #lines
@@ -596,16 +615,33 @@ function M.update_comment_body(source_buf, id, new_body)
       local suffix = line:sub(ref_e + 1)
       local pre, old_body = prefix:match("^(.-){>>(.-)<<}$")
       if pre then
-        if old_body ~= new_body then
+        if old_body == new_body then return false end
+        if multiline then
+          -- Body no longer fits inline: drop the {>>..<<} part and store the
+          -- body in the endmatter instead.
+          local new_line = pre .. ref .. suffix
+          vim.api.nvim_buf_set_lines(source_buf, lnum - 1, lnum, false, { new_line })
+          local meta = read_endmatter(source_buf)
+          meta.comments[id] = meta.comments[id] or {}
+          meta.comments[id].body = new_body
+          write_endmatter(source_buf, meta)
+        else
           local new_line = pre .. "{>>" .. new_body .. "<<}" .. ref .. suffix
           vim.api.nvim_buf_set_lines(source_buf, lnum - 1, lnum, false, { new_line })
-          return true
         end
-        return false
+        return true
       end
     end
   end
-  return false
+
+  -- No inline body: the body lives in the endmatter (multi-line comment).
+  local meta = read_endmatter(source_buf)
+  local entry = (meta.comments or {})[id]
+  if not entry or entry.re then return false end
+  if entry.body == new_body then return false end
+  entry.body = new_body
+  write_endmatter(source_buf, meta)
+  return true
 end
 
 function M.update_reply_body(source_buf, id, new_body)
@@ -632,7 +668,7 @@ function M.add_reply(source_buf, parent_id, body, author)
   return id
 end
 
-function M.approve(source_buf, id)
+local function resolve(source_buf, id, mode)
   local lines = vim.api.nvim_buf_get_lines(source_buf, 0, -1, false)
   local sep = util.find_endmatter_sep(lines)
   local content_end = sep and (sep - 1) or #lines
@@ -642,9 +678,15 @@ function M.approve(source_buf, id)
   local changed = false
   for lnum = content_end, 1, -1 do
     if lines[lnum]:find(ref, 1, true) then
-      local new_line = transform_annotation(lines[lnum], id, "approve")
+      local new_line = transform_annotation(lines[lnum], id, mode)
       if new_line ~= lines[lnum] then
-        vim.api.nvim_buf_set_lines(source_buf, lnum - 1, lnum, false, { new_line })
+        if mode == "approve" and new_line == "" and lines[lnum] ~= "" then
+          -- The whole line was the annotation (a full-line deletion): remove
+          -- the line instead of leaving a blank one behind.
+          vim.api.nvim_buf_set_lines(source_buf, lnum - 1, lnum, false, {})
+        else
+          vim.api.nvim_buf_set_lines(source_buf, lnum - 1, lnum, false, { new_line })
+        end
         changed = true
       end
     end
@@ -656,28 +698,12 @@ function M.approve(source_buf, id)
   return changed
 end
 
-function M.reject(source_buf, id)
-  local lines = vim.api.nvim_buf_get_lines(source_buf, 0, -1, false)
-  local sep = util.find_endmatter_sep(lines)
-  local content_end = sep and (sep - 1) or #lines
-  local meta = parse_endmatter(lines, sep)
-  local ref = "{#" .. id .. "}"
+function M.approve(source_buf, id)
+  return resolve(source_buf, id, "approve")
+end
 
-  local changed = false
-  for lnum = content_end, 1, -1 do
-    if lines[lnum]:find(ref, 1, true) then
-      local new_line = transform_annotation(lines[lnum], id, "reject")
-      if new_line ~= lines[lnum] then
-        vim.api.nvim_buf_set_lines(source_buf, lnum - 1, lnum, false, { new_line })
-        changed = true
-      end
-    end
-  end
-  if changed then
-    cascade_remove_meta(meta, id)
-    write_endmatter(source_buf, meta)
-  end
-  return changed
+function M.reject(source_buf, id)
+  return resolve(source_buf, id, "reject")
 end
 
 function M.delete_reply(source_buf, reply_id)

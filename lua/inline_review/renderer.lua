@@ -162,7 +162,12 @@ function M.render(buf, items)
       elseif meta.field == "sep_thin"      then hl = "InlineReviewSep"
       end
     end
-    if hl then vim.api.nvim_buf_add_highlight(buf, NS, hl, lnum - 1, 0, -1) end
+    if hl and #lines[lnum] > 0 then
+      vim.api.nvim_buf_set_extmark(buf, NS, lnum - 1, 0, {
+        end_col  = #lines[lnum],
+        hl_group = hl,
+      })
+    end
     if meta.field == "header" or meta.field == "reply_header" then
       M._block_targets[#M._block_targets + 1] = lnum
     end
@@ -189,26 +194,6 @@ function M.header_line_for(id)
     if meta.id == id and meta.field == "header" then return lnum end
   end
   return nil
-end
-
-function M.body_line_for(id)
-  local min_lnum = nil
-  for lnum, meta in pairs(M._line_map) do
-    if meta.id == id and meta.field == "body" and meta.body_line == 1 then
-      if not min_lnum or lnum < min_lnum then min_lnum = lnum end
-    end
-  end
-  return min_lnum
-end
-
-function M.reply_body_line_for(reply_id)
-  local min_lnum = nil
-  for lnum, meta in pairs(M._line_map) do
-    if meta.reply_id == reply_id and meta.field == "reply_body" and meta.body_line == 1 then
-      if not min_lnum or lnum < min_lnum then min_lnum = lnum end
-    end
-  end
-  return min_lnum
 end
 
 function M.next_block_line()

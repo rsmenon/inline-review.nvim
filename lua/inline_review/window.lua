@@ -1,6 +1,7 @@
-local storage   = require("inline_review.storage")
-local renderer  = require("inline_review.renderer")
+local storage    = require("inline_review.storage")
+local renderer   = require("inline_review.renderer")
 local highlights = require("inline_review.highlights")
+local util       = require("inline_review.util")
 
 local M = {}
 
@@ -10,7 +11,13 @@ local FLASH_NS = vim.api.nvim_create_namespace("inline_review_flash")
 local function flash_line(win, lnum)
   if not vim.api.nvim_win_is_valid(win) then return end
   local buf = vim.api.nvim_win_get_buf(win)
-  vim.api.nvim_buf_add_highlight(buf, FLASH_NS, "Visual", lnum - 1, 0, -1)
+  local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
+  if #line > 0 then
+    vim.api.nvim_buf_set_extmark(buf, FLASH_NS, lnum - 1, 0, {
+      end_col  = #line,
+      hl_group = "Visual",
+    })
+  end
   vim.defer_fn(function()
     if vim.api.nvim_buf_is_valid(buf) then
       vim.api.nvim_buf_clear_namespace(buf, FLASH_NS, 0, -1)
@@ -87,27 +94,23 @@ local function open_input_float(opts)
     if opts.on_cancel then opts.on_cancel() end
   end
 
-  local cr = vim.api.nvim_replace_termcodes("<CR>", true, false, true)
-  vim.keymap.set("i", "<CR>",  submit,  { buffer = fbuf, nowait = true })
-  vim.keymap.set("i", "<S-CR>", function()
-    vim.api.nvim_feedkeys(cr, "i", false)
-    vim.schedule(function()
-      if not vim.api.nvim_win_is_valid(fwin) then return end
-      local count = vim.api.nvim_buf_line_count(fbuf)
-      vim.api.nvim_win_set_config(fwin, { height = math.min(count, 10) })
-    end)
-  end, { buffer = fbuf, nowait = true })
-  vim.keymap.set("i", "<C-j>", function()
-    vim.api.nvim_feedkeys(cr, "i", false)
-    vim.schedule(function()
-      if not vim.api.nvim_win_is_valid(fwin) then return end
-      local count = vim.api.nvim_buf_line_count(fbuf)
-      vim.api.nvim_win_set_config(fwin, { height = math.min(count, 10) })
-    end)
-  end, { buffer = fbuf, nowait = true })
-  vim.keymap.set("i", "<Esc>", cancel, { buffer = fbuf, nowait = true })
-  vim.keymap.set("n", "<Esc>", cancel, { buffer = fbuf, nowait = true })
-  vim.keymap.set("n", "q",     cancel, { buffer = fbuf, nowait = true })
+  -- Insert the newline as a buffer edit: feeding <CR> would be remapped to
+  -- the submit mapping below.
+  local function insert_newline()
+    if not vim.api.nvim_win_is_valid(fwin) then return end
+    local pos = vim.api.nvim_win_get_cursor(fwin)
+    vim.api.nvim_buf_set_text(fbuf, pos[1] - 1, pos[2], pos[1] - 1, pos[2], { "", "" })
+    vim.api.nvim_win_set_cursor(fwin, { pos[1] + 1, 0 })
+    local count = vim.api.nvim_buf_line_count(fbuf)
+    vim.api.nvim_win_set_config(fwin, { height = math.min(count, 10) })
+  end
+
+  vim.keymap.set("i", "<CR>",   submit,         { buffer = fbuf, nowait = true })
+  vim.keymap.set("i", "<S-CR>", insert_newline, { buffer = fbuf, nowait = true })
+  vim.keymap.set("i", "<C-j>",  insert_newline, { buffer = fbuf, nowait = true })
+  vim.keymap.set("i", "<Esc>",  cancel,         { buffer = fbuf, nowait = true })
+  vim.keymap.set("n", "<Esc>",  cancel,         { buffer = fbuf, nowait = true })
+  vim.keymap.set("n", "q",      cancel,         { buffer = fbuf, nowait = true })
 
   vim.api.nvim_create_autocmd({ "BufLeave", "WinLeave" }, {
     buffer   = fbuf,
@@ -122,20 +125,20 @@ local function open_input_float(opts)
 end
 
 local state = {
-  win_id      = nil,
-  buf_id      = nil,
-  source_buf  = nil,
-  source_win  = nil,
-  source_file = nil,
-  config      = {},
-  syncing     = false,
+  win_id           = nil,
+  buf_id           = nil,
+  source_buf       = nil,
+  source_win       = nil,
+  source_file      = nil,
+  config           = {},
+  syncing          = false,
   focused_id       = nil,
   focused_reply_id = nil,
-  augroup          = nil,
+  source_augroup   = nil,
+  pane_augroup     = nil,
 }
 
 local source_timer = nil
-local pane_timer   = nil
 
 local function is_open()
   return state.win_id ~= nil and vim.api.nvim_win_is_valid(state.win_id)
@@ -226,7 +229,6 @@ local function fold_endmatter()
   if not vim.api.nvim_buf_is_valid(state.source_buf) then return end
   if not vim.api.nvim_win_is_valid(state.source_win) then return end
 
-  local util = require("inline_review.util")
   local lines = vim.api.nvim_buf_get_lines(state.source_buf, 0, -1, false)
   local sep = util.find_endmatter_sep(lines)
   if not sep then return end
@@ -247,7 +249,6 @@ local function sync_source_to_pane()
   if not vim.api.nvim_buf_is_valid(state.buf_id) then return end
 
   state.syncing = true
-  if pane_timer then pane_timer:stop() end
 
   local ok, err = pcall(function()
     local items = storage.parse(state.source_buf)
@@ -255,52 +256,6 @@ local function sync_source_to_pane()
     highlights.apply(state.source_buf)
     fold_endmatter()
     apply_card_focus(state.focused_id, state.focused_reply_id)
-  end)
-
-  state.syncing = false
-  if not ok then vim.notify("inline-review: " .. tostring(err), vim.log.levels.ERROR) end
-end
-
-local function sync_pane_to_source()
-  if state.syncing then return end
-  if not state.source_buf or not state.buf_id then return end
-  if not vim.api.nvim_buf_is_valid(state.source_buf) then return end
-  if not vim.api.nvim_buf_is_valid(state.buf_id) then return end
-
-  state.syncing = true
-
-  local ok, err = pcall(function()
-    local pane_lines = vim.api.nvim_buf_get_lines(state.buf_id, 0, -1, false)
-    local lmap       = renderer._line_map
-
-    local bodies      = {}
-    local reply_bodies = {}
-
-    for lnum, meta in pairs(lmap) do
-      if meta.field == "body" and meta.body_line then
-        bodies[meta.id] = bodies[meta.id] or {}
-        bodies[meta.id][meta.body_line] = pane_lines[lnum] or ""
-      elseif meta.field == "reply_body" and meta.reply_id and meta.body_line then
-        reply_bodies[meta.reply_id] = reply_bodies[meta.reply_id] or {}
-        local strip = (meta.reply_depth or 1) * 2
-        reply_bodies[meta.reply_id][meta.body_line] = (pane_lines[lnum] or ""):sub(strip + 1)
-      end
-    end
-
-    local function parts_to_text(parts)
-      local max = 0
-      for k in pairs(parts) do if k > max then max = k end end
-      local t = {}
-      for k = 1, max do t[k] = parts[k] or "" end
-      return table.concat(t, "\n")
-    end
-
-    for id, parts in pairs(bodies) do
-      storage.update_comment_body(state.source_buf, id, parts_to_text(parts))
-    end
-    for rid, parts in pairs(reply_bodies) do
-      storage.update_reply_body(state.source_buf, rid, parts_to_text(parts))
-    end
   end)
 
   state.syncing = false
@@ -336,12 +291,6 @@ local function schedule_source_to_pane()
   if state.syncing or not source_timer then return end
   source_timer:stop()
   source_timer:start(150, 0, vim.schedule_wrap(sync_source_to_pane))
-end
-
-local function schedule_pane_to_source()
-  if state.syncing or not pane_timer then return end
-  pane_timer:stop()
-  pane_timer:start(150, 0, vim.schedule_wrap(sync_pane_to_source))
 end
 
 local function make_review_buf()
@@ -390,20 +339,62 @@ local function conceal_aware_motion(key)
   end
 end
 
-local function setup_autocmds()
-  local ag = vim.api.nvim_create_augroup("InlineReview", { clear = true })
-  state.augroup = ag
+local function should_track(buf)
+  if not vim.api.nvim_buf_is_valid(buf) then return false end
+  if vim.bo[buf].buftype ~= "" then return false end
+  local ft = vim.bo[buf].filetype
+  if ft ~= "markdown" and ft ~= "text" then return false end
+  return vim.api.nvim_buf_get_name(buf) ~= ""
+end
+
+local function detach_source()
+  if state.source_augroup then
+    pcall(vim.api.nvim_del_augroup_by_id, state.source_augroup)
+    state.source_augroup = nil
+  end
+  if state.source_buf and vim.api.nvim_buf_is_valid(state.source_buf) then
+    for _, key in ipairs({ "w", "b", "e" }) do
+      pcall(vim.keymap.del, "n", key, { buffer = state.source_buf })
+    end
+    highlights.clear(state.source_buf)
+  end
+  if state.source_win and vim.api.nvim_win_is_valid(state.source_win)
+      and state._prev_foldmethod then
+    vim.wo[state.source_win].foldmethod = state._prev_foldmethod
+  end
+  state._prev_foldmethod = nil
+  state.source_buf  = nil
+  state.source_win  = nil
+  state.source_file = nil
+  state.focused_id       = nil
+  state.focused_reply_id = nil
+end
+
+local function attach_source(buf, win)
+  state.source_buf  = buf
+  state.source_win  = win
+  state.source_file = vim.api.nvim_buf_get_name(buf)
+  state.focused_id       = nil
+  state.focused_reply_id = nil
+
+  state._prev_foldmethod = vim.wo[win].foldmethod
+  if state._prev_foldmethod ~= "manual" then
+    vim.wo[win].foldmethod = "manual"
+  end
+
+  local ag = vim.api.nvim_create_augroup("InlineReviewSource", { clear = true })
+  state.source_augroup = ag
 
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "InsertLeave" }, {
     group    = ag,
-    buffer   = state.source_buf,
+    buffer   = buf,
     callback = schedule_source_to_pane,
   })
 
   local snap_guard = false
   vim.api.nvim_create_autocmd("CursorMoved", {
     group    = ag,
-    buffer   = state.source_buf,
+    buffer   = buf,
     callback = function()
       if snap_guard then
         snap_guard = false
@@ -421,57 +412,9 @@ local function setup_autocmds()
     end,
   })
 
-  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "InsertLeave" }, {
-    group    = ag,
-    buffer   = state.buf_id,
-    callback = schedule_pane_to_source,
-  })
-
-  vim.api.nvim_create_autocmd("CursorMoved", {
-    group    = ag,
-    buffer   = state.buf_id,
-    callback = function()
-      if state.syncing then return end
-      local meta = renderer.context_at_cursor()
-      local id       = meta and meta.id or nil
-      local reply_id = meta and meta.reply_id or nil
-      if id == state.focused_id and reply_id == state.focused_reply_id then return end
-      state.focused_id = id
-      state.focused_reply_id = reply_id
-      apply_card_focus(id, reply_id)
-      if not id or not state.source_buf then return end
-      local items = storage.parse(state.source_buf)
-      for _, item in ipairs(items) do
-        if item.id == id then
-          local src_win = vim.fn.bufwinid(state.source_buf)
-          if src_win ~= -1 then
-            vim.api.nvim_win_call(src_win, function()
-              vim.api.nvim_win_set_cursor(src_win, { item.start_line, item.start_col or 0 })
-              vim.cmd("normal! zz")
-            end)
-            flash_line(src_win, item.start_line)
-          end
-          return
-        end
-      end
-    end,
-  })
-
-  vim.api.nvim_create_autocmd("OptionSet", {
-    group   = ag,
-    pattern = "conceallevel",
-    callback = function()
-      if not is_open() then return end
-      if not state.source_win or not vim.api.nvim_win_is_valid(state.source_win) then return end
-      if vim.wo[state.source_win].conceallevel ~= 2 then
-        vim.wo[state.source_win].conceallevel = 2
-      end
-    end,
-  })
-
   vim.api.nvim_create_autocmd("WinLeave", {
     group  = ag,
-    buffer = state.source_buf,
+    buffer = buf,
     callback = function()
       vim.schedule(function()
         if not is_open() then return end
@@ -486,9 +429,16 @@ local function setup_autocmds()
     end,
   })
 
-  for _, key in ipairs({"w", "b", "e"}) do
-    vim.keymap.set("n", key, conceal_aware_motion(key), { buffer = state.source_buf })
+  for _, key in ipairs({ "w", "b", "e" }) do
+    vim.keymap.set("n", key, conceal_aware_motion(key), { buffer = buf })
   end
+
+  sync_source_to_pane()
+end
+
+local function retarget(buf, win)
+  detach_source()
+  attach_source(buf, win)
 end
 
 function M.open(opts)
@@ -497,24 +447,21 @@ function M.open(opts)
   opts = opts or {}
   local width = opts.width or 45
 
-  state.source_buf  = vim.api.nvim_get_current_buf()
-  state.source_win  = vim.api.nvim_get_current_win()
-  state.source_file = vim.api.nvim_buf_get_name(state.source_buf)
-  state.config      = opts
+  local src_buf = vim.api.nvim_get_current_buf()
+  local src_win = vim.api.nvim_get_current_win()
 
-  if state.source_file == "" then
+  if vim.api.nvim_buf_get_name(src_buf) == "" then
     vim.notify("inline-review: save the buffer before reviewing", vim.log.levels.WARN)
     return
   end
+
+  state.config = opts
 
   if not state.buf_id or not vim.api.nvim_buf_is_valid(state.buf_id) then
     state.buf_id = make_review_buf()
   end
 
   source_timer = vim.uv.new_timer()
-  pane_timer = vim.uv.new_timer()
-
-  local source_win = vim.api.nvim_get_current_win()
 
   vim.cmd("botright vsplit")
   state.win_id = vim.api.nvim_get_current_win()
@@ -546,45 +493,95 @@ function M.open(opts)
     end))
   end
 
-  state._prev_foldmethod = vim.wo[state.source_win].foldmethod
-  if state._prev_foldmethod ~= "manual" then
-    vim.wo[state.source_win].foldmethod = "manual"
-  end
+  local pane_ag = vim.api.nvim_create_augroup("InlineReviewPane", { clear = true })
+  state.pane_augroup = pane_ag
 
-  sync_source_to_pane()
-  setup_autocmds()
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    group    = pane_ag,
+    buffer   = state.buf_id,
+    callback = function()
+      if state.syncing then return end
+      local meta = renderer.context_at_cursor()
+      local id       = meta and meta.id or nil
+      local reply_id = meta and meta.reply_id or nil
+      if id == state.focused_id and reply_id == state.focused_reply_id then return end
+      state.focused_id = id
+      state.focused_reply_id = reply_id
+      apply_card_focus(id, reply_id)
+      if not id or not state.source_buf then return end
+      local items = storage.parse(state.source_buf)
+      for _, item in ipairs(items) do
+        if item.id == id then
+          local target_win = vim.fn.bufwinid(state.source_buf)
+          if target_win ~= -1 then
+            vim.api.nvim_win_call(target_win, function()
+              vim.api.nvim_win_set_cursor(target_win, { item.start_line, item.start_col or 0 })
+              vim.cmd("normal! zz")
+            end)
+            flash_line(target_win, item.start_line)
+          end
+          return
+        end
+      end
+    end,
+  })
 
-  vim.api.nvim_set_current_win(source_win)
+  vim.api.nvim_create_autocmd("OptionSet", {
+    group   = pane_ag,
+    pattern = "conceallevel",
+    callback = function()
+      if not is_open() then return end
+      if not state.source_win or not vim.api.nvim_win_is_valid(state.source_win) then return end
+      if vim.wo[state.source_win].conceallevel ~= 2 then
+        vim.wo[state.source_win].conceallevel = 2
+      end
+    end,
+  })
+
+  -- Follow the user into other annotated files: retarget the pane when a
+  -- different markdown/text file buffer becomes current.
+  vim.api.nvim_create_autocmd("BufEnter", {
+    group    = pane_ag,
+    callback = function(ev)
+      if not is_open() then return end
+      local win = vim.api.nvim_get_current_win()
+      if win == state.win_id or ev.buf == state.buf_id then return end
+      if vim.api.nvim_win_get_config(win).relative ~= "" then return end
+      if ev.buf == state.source_buf and win == state.source_win then return end
+      if not should_track(ev.buf) then return end
+      retarget(ev.buf, win)
+    end,
+  })
+
+  -- Clean up state when the pane window is closed externally (:q, :close, ...).
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group    = pane_ag,
+    pattern  = tostring(state.win_id),
+    callback = function()
+      vim.schedule(M.close)
+    end,
+  })
+
+  attach_source(src_buf, src_win)
+
+  vim.api.nvim_set_current_win(src_win)
 end
 
 function M.close()
   if source_timer then source_timer:stop(); source_timer:close(); source_timer = nil end
-  if pane_timer then pane_timer:stop(); pane_timer:close(); pane_timer = nil end
-  state.focused_id = nil
-  state.focused_reply_id = nil
-  if state.source_win and vim.api.nvim_win_is_valid(state.source_win) then
-    if state._prev_foldmethod then
-      vim.wo[state.source_win].foldmethod = state._prev_foldmethod
-      state._prev_foldmethod = nil
-    end
+  detach_source()
+  if state.pane_augroup then
+    pcall(vim.api.nvim_del_augroup_by_id, state.pane_augroup)
+    state.pane_augroup = nil
   end
-  state.source_win = nil
   if is_open() then
-    vim.api.nvim_win_close(state.win_id, true)
+    local win = state.win_id
     state.win_id = nil
+    vim.api.nvim_win_close(win, true)
   end
+  state.win_id = nil
   if state.buf_id and vim.api.nvim_buf_is_valid(state.buf_id) then
     vim.api.nvim_buf_clear_namespace(state.buf_id, FOCUS_NS, 0, -1)
-  end
-  if state.source_buf and vim.api.nvim_buf_is_valid(state.source_buf) then
-    for _, key in ipairs({"w", "b", "e"}) do
-      pcall(vim.keymap.del, "n", key, { buffer = state.source_buf })
-    end
-    highlights.clear(state.source_buf)
-  end
-  if state.augroup then
-    pcall(vim.api.nvim_del_augroup_by_id, state.augroup)
-    state.augroup = nil
   end
 end
 
@@ -602,11 +599,10 @@ function M.add_suggestion(stype, sel, opts)
   end
 
   if not is_open() then
-    state.source_buf  = src_buf
-    state.source_file = src_name
     M.open(opts)
-    state.source_buf  = src_buf
-    state.source_file = src_name
+    if not is_open() then return end
+  elseif src_buf ~= state.source_buf then
+    retarget(src_buf, vim.api.nvim_get_current_win())
   end
 
   local author      = opts and opts.author or ""

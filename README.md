@@ -36,7 +36,7 @@ Select the location where text should be inserted, press `<leader>ra`, type the 
 
 ### Deletion
 
-Select the text to remove, press `<leader>rd`. No input needed — the selected text is immediately marked for deletion. Shown with strikethrough.
+Select the text to remove, press `<leader>rd`. No input needed — the selected text is immediately marked for deletion. Shown with strikethrough. When an approved deletion covers a whole line, the line is removed rather than left blank.
 
 ### Replacement
 
@@ -45,6 +45,8 @@ Select the text to replace, press `<leader>rr`, type the replacement. The pane s
 All four types support multi-line selections. When a selection spans multiple lines, each line is annotated separately under the same ID, and the pane shows them as a single card.
 
 ## Keymaps
+
+All keymaps are configurable via the `keymaps` table in `setup()` — see [Configuration](#configuration). Set any of them to `false` to disable (e.g. `keymaps.source.jump_to_pane = false` if `gd` should keep its usual meaning).
 
 ### Source buffer (markdown/text files)
 
@@ -84,6 +86,26 @@ Word motions (`w`, `b`, `e`) are conceal-aware while the pane is open — they s
 | `<Esc>` | i, n | Cancel |
 | `q` | n | Cancel |
 
+Note: many terminals send plain `<CR>` for Shift-Enter, which submits instead. `<C-j>` works everywhere; `<S-CR>` requires a terminal with extended-key support (kitty, WezTerm, Ghostty — and `extended-keys` enabled if inside tmux).
+
+## Commands
+
+Everything is also available through `:InlineReview` for use without the default keymaps:
+
+| Command | Action |
+|---------|--------|
+| `:InlineReview toggle` (or bare `:InlineReview`) | Toggle the review pane |
+| `:InlineReview open` / `close` | Open/close the review pane |
+| `:InlineReview next` / `prev` | Jump between annotations |
+| `:'<,'>InlineReview comment` | Comment on the visual selection |
+| `:'<,'>InlineReview addition` | Propose an addition |
+| `:'<,'>InlineReview deletion` | Propose deleting the selection |
+| `:'<,'>InlineReview replacement` | Propose replacing the selection |
+
+While the pane is open, it follows you: entering a different markdown/text file retargets the pane to that buffer.
+
+Run `:checkhealth inline_review` to verify the setup.
+
 ## Configuration
 
 ```lua
@@ -91,6 +113,30 @@ require("inline_review").setup({
   width   = 45,       -- review pane width in columns
   author  = "alice",  -- stored in annotation metadata
   animate = true,     -- slide-in animation when opening the pane (default: false)
+  keymaps = {
+    source = {        -- markdown/text buffers; set any to false to disable
+      toggle          = "<leader>rp",
+      comment         = "<leader>rc",
+      addition        = "<leader>ra",
+      deletion        = "<leader>rd",
+      replacement     = "<leader>rr",
+      jump_to_pane    = "gd",
+      next_annotation = "]r",
+      prev_annotation = "[r",
+    },
+    pane = {          -- review pane buffer
+      next    = "j",
+      prev    = "k",
+      peek    = "gd",
+      jump    = "<CR>",
+      approve = "A",
+      delete  = "D",
+      reply   = "R",
+      edit    = "E",
+      undo    = "u",
+      redo    = "<C-r>",
+    },
+  },
 })
 ```
 
@@ -167,6 +213,22 @@ comments:
     re: c1
 ```
 
+Single-line comment bodies live inline in the `{>>body<<}` markup. A comment body containing newlines is stored in the endmatter `body:` field instead (as a YAML block scalar), with the inline markup carrying only the anchor: `{==anchor==}{#c1}`. Addition and replacement text is inline-only, so newlines typed in those prompts are joined with spaces.
+
 ## Requirements
 
 Neovim >= 0.10
+
+## Development
+
+Run the test suite with:
+
+```sh
+nvim -l tests/run_tests.lua
+```
+
+Lint with [luacheck](https://github.com/lunarmodules/luacheck) (configured by `.luacheckrc`):
+
+```sh
+luacheck .
+```

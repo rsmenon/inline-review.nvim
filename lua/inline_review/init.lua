@@ -1,89 +1,142 @@
-local window     = require("inline_review.window")
-local renderer   = require("inline_review.renderer")
-local storage    = require("inline_review.storage")
-local highlights = require("inline_review.highlights")
+local window   = require("inline_review.window")
+local renderer = require("inline_review.renderer")
+local storage  = require("inline_review.storage")
+local util     = require("inline_review.util")
 
 local M = {}
 
 M.config = {
-  width  = 45,
-  author = vim.uv.os_get_passwd().username,
+  width   = 45,
+  author  = vim.uv.os_get_passwd().username,
+  animate = false,
+  keymaps = {
+    source = {
+      toggle          = "<leader>rp",
+      comment         = "<leader>rc",
+      addition        = "<leader>ra",
+      deletion        = "<leader>rd",
+      replacement     = "<leader>rr",
+      jump_to_pane    = "gd",
+      next_annotation = "]r",
+      prev_annotation = "[r",
+    },
+    pane = {
+      next    = "j",
+      prev    = "k",
+      peek    = "gd",
+      jump    = "<CR>",
+      approve = "A",
+      delete  = "D",
+      reply   = "R",
+      edit    = "E",
+      undo    = "u",
+      redo    = "<C-r>",
+    },
+  },
 }
 
-local function capture_visual_selection()
-  local s = vim.fn.getpos("'<")
-  local e = vim.fn.getpos("'>")
-  return { start_line = s[2], end_line = e[2], start_col = s[3], end_col = e[3] }
+-- Set a keymap unless disabled (set to false) in the config.
+local function map(mode, lhs, rhs, opts)
+  if not lhs then return end
+  vim.keymap.set(mode, lhs, rhs, opts)
 end
 
 local function on_visual(fn)
   return function()
     local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
     vim.api.nvim_feedkeys(esc, "x", false)
-    local sel = capture_visual_selection()
+    local sel = util.capture_visual_selection()
     sel.cursor_line = vim.fn.line(".")
     sel.cursor_col  = vim.fn.col(".")
     fn(sel)
   end
 end
 
-local function attach_source_keymaps(buf)
-  local o = { buffer = buf }
-
-  vim.keymap.set("n", "<leader>rp", function()
-    window.toggle(M.config)
-  end, vim.tbl_extend("force", o, { desc = "Toggle inline review pane" }))
-
-  vim.keymap.set("n", "gd", function()
-    window.jump_to_pane()
-  end, vim.tbl_extend("force", o, { desc = "Jump to review item in pane" }))
-
-  vim.keymap.set("v", "<leader>rc", on_visual(function(sel)
-    window.add_suggestion("comment", sel, M.config)
-  end), vim.tbl_extend("force", o, { desc = "Add review comment" }))
-
-  vim.keymap.set("v", "<leader>ra", on_visual(function(sel)
-    window.add_suggestion("addition", sel, M.config)
-  end), vim.tbl_extend("force", o, { desc = "Propose addition" }))
-
-  vim.keymap.set("v", "<leader>rd", on_visual(function(sel)
-    window.add_suggestion("deletion", sel, M.config)
-  end), vim.tbl_extend("force", o, { desc = "Propose deletion" }))
-
-  vim.keymap.set("v", "<leader>rr", on_visual(function(sel)
-    window.add_suggestion("replacement", sel, M.config)
-  end), vim.tbl_extend("force", o, { desc = "Propose replacement" }))
-
-  local function jump_to_annotation(direction)
-    return function()
-      local items = storage.parse(vim.api.nvim_get_current_buf())
-      if #items == 0 then return end
-      local cursor = vim.api.nvim_win_get_cursor(0)[1]
-      table.sort(items, function(a, b) return a.start_line < b.start_line end)
-      if direction == "next" then
-        for _, item in ipairs(items) do
-          if item.start_line > cursor then
-            vim.api.nvim_win_set_cursor(0, { item.start_line, item.start_col or 0 })
-            return
-          end
-        end
-        vim.api.nvim_win_set_cursor(0, { items[1].start_line, items[1].start_col or 0 })
-      else
-        for i = #items, 1, -1 do
-          if items[i].start_line < cursor then
-            vim.api.nvim_win_set_cursor(0, { items[i].start_line, items[i].start_col or 0 })
-            return
-          end
-        end
-        vim.api.nvim_win_set_cursor(0, { items[#items].start_line, items[#items].start_col or 0 })
+local function jump_to_annotation(direction)
+  local items = vim.list_extend({}, storage.parse(vim.api.nvim_get_current_buf()))
+  if #items == 0 then return end
+  local cursor = vim.api.nvim_win_get_cursor(0)[1]
+  table.sort(items, function(a, b) return a.start_line < b.start_line end)
+  if direction == "next" then
+    for _, item in ipairs(items) do
+      if item.start_line > cursor then
+        vim.api.nvim_win_set_cursor(0, { item.start_line, item.start_col or 0 })
+        return
       end
+    end
+    vim.api.nvim_win_set_cursor(0, { items[1].start_line, items[1].start_col or 0 })
+  else
+    for i = #items, 1, -1 do
+      if items[i].start_line < cursor then
+        vim.api.nvim_win_set_cursor(0, { items[i].start_line, items[i].start_col or 0 })
+        return
+      end
+    end
+    vim.api.nvim_win_set_cursor(0, { items[#items].start_line, items[#items].start_col or 0 })
+  end
+end
+
+local function attach_source_keymaps(buf)
+  local km = M.config.keymaps.source or {}
+  local function o(desc) return { buffer = buf, desc = desc } end
+
+  map("n", km.toggle, function() window.toggle(M.config) end, o("Toggle inline review pane"))
+  map("n", km.jump_to_pane, window.jump_to_pane, o("Jump to review item in pane"))
+
+  map("v", km.comment, on_visual(function(sel)
+    window.add_suggestion("comment", sel, M.config)
+  end), o("Add review comment"))
+  map("v", km.addition, on_visual(function(sel)
+    window.add_suggestion("addition", sel, M.config)
+  end), o("Propose addition"))
+  map("v", km.deletion, on_visual(function(sel)
+    window.add_suggestion("deletion", sel, M.config)
+  end), o("Propose deletion"))
+  map("v", km.replacement, on_visual(function(sel)
+    window.add_suggestion("replacement", sel, M.config)
+  end), o("Propose replacement"))
+
+  map("n", km.next_annotation, function() jump_to_annotation("next") end,
+    o("Next inline review annotation"))
+  map("n", km.prev_annotation, function() jump_to_annotation("prev") end,
+    o("Previous inline review annotation"))
+end
+
+local function attach_pane_keymaps(buf)
+  local km = M.config.keymaps.pane or {}
+  local function o(desc) return { buffer = buf, desc = desc } end
+
+  map("n", km.peek, window.peek_source, o("Peek source location (keep focus in pane)"))
+  map("n", km.jump, window.jump_to_source, o("Jump to source location"))
+
+  map("n", km.next, function()
+    local lnum = renderer.next_block_line()
+    if lnum then vim.api.nvim_win_set_cursor(0, { lnum, 0 }) end
+  end, o("Next review block"))
+  map("n", km.prev, function()
+    local lnum = renderer.prev_block_line()
+    if lnum then vim.api.nvim_win_set_cursor(0, { lnum, 0 }) end
+  end, o("Previous review block"))
+
+  map("n", km.approve, window.approve_current, o("Approve suggestion"))
+  map("n", km.delete, window.delete_current, o("Delete/reject item or reply"))
+  map("n", km.reply, window.reply_current, o("Reply to comment"))
+  map("n", km.edit, window.edit_current, o("Edit comment body"))
+
+  local function source_undo(cmd)
+    return function()
+      local src = window.source_buf()
+      if not src or not vim.api.nvim_buf_is_valid(src) then return end
+      local src_win = vim.fn.bufwinid(src)
+      if src_win == -1 then return end
+      vim.api.nvim_win_call(src_win, function()
+        vim.cmd("silent! " .. cmd)
+      end)
     end
   end
 
-  vim.keymap.set("n", "]r", jump_to_annotation("next"),
-    vim.tbl_extend("force", o, { desc = "Next inline review annotation" }))
-  vim.keymap.set("n", "[r", jump_to_annotation("prev"),
-    vim.tbl_extend("force", o, { desc = "Previous inline review annotation" }))
+  map("n", km.undo, source_undo("undo"), o("Undo in source buffer"))
+  map("n", km.redo, source_undo("redo"), o("Redo in source buffer"))
 end
 
 local function maybe_auto_open(buf)
@@ -122,14 +175,51 @@ local function apply_highlights()
   vim.api.nvim_set_hl(0, "InlineReviewPaneBg",          { link = "NormalFloat",                                default = true })
 end
 
+local SUBCOMMANDS = {
+  "toggle", "open", "close", "next", "prev",
+  "comment", "addition", "deletion", "replacement",
+}
+
+local function run_command(cmd)
+  local sub = cmd.fargs[1] or "toggle"
+  if sub == "toggle" then
+    window.toggle(M.config)
+  elseif sub == "open" then
+    window.open(M.config)
+  elseif sub == "close" then
+    window.close()
+  elseif sub == "next" or sub == "prev" then
+    jump_to_annotation(sub)
+  elseif vim.tbl_contains({ "comment", "addition", "deletion", "replacement" }, sub) then
+    if cmd.range == 0 then
+      vim.notify("inline-review: :InlineReview " .. sub .. " needs a visual selection",
+        vim.log.levels.WARN)
+      return
+    end
+    local sel = util.capture_visual_selection()
+    sel.cursor_line = sel.end_line
+    sel.cursor_col  = sel.end_col + 1
+    window.add_suggestion(sub, sel, M.config)
+  else
+    vim.notify("inline-review: unknown subcommand: " .. sub, vim.log.levels.ERROR)
+  end
+end
+
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
   vim.g.inline_review_setup_done = true
 
+  local ag = vim.api.nvim_create_augroup("InlineReviewSetup", { clear = true })
+
   apply_highlights()
-  vim.api.nvim_create_autocmd("ColorScheme", { pattern = "*", callback = apply_highlights })
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group    = ag,
+    pattern  = "*",
+    callback = apply_highlights,
+  })
 
   vim.api.nvim_create_autocmd("FileType", {
+    group    = ag,
     pattern  = { "markdown", "text" },
     callback = function(ev)
       local win = vim.fn.bufwinid(ev.buf)
@@ -143,48 +233,21 @@ function M.setup(opts)
   })
 
   vim.api.nvim_create_autocmd("FileType", {
+    group    = ag,
     pattern  = "inline-review",
-    callback = function()
-      vim.keymap.set("n", "gd", window.peek_source,
-        { buffer = true, desc = "Peek source location (keep focus in pane)" })
-      vim.keymap.set("n", "<CR>", window.jump_to_source,
-        { buffer = true, desc = "Jump to source location" })
+    callback = function(ev)
+      attach_pane_keymaps(ev.buf)
+    end,
+  })
 
-      vim.keymap.set("n", "j", function()
-        local lnum = renderer.next_block_line()
-        if lnum then vim.api.nvim_win_set_cursor(0, { lnum, 0 }) end
-      end, { buffer = true, desc = "Next review block" })
-
-      vim.keymap.set("n", "k", function()
-        local lnum = renderer.prev_block_line()
-        if lnum then vim.api.nvim_win_set_cursor(0, { lnum, 0 }) end
-      end, { buffer = true, desc = "Previous review block" })
-
-      vim.keymap.set("n", "A", window.approve_current,
-        { buffer = true, desc = "Approve suggestion" })
-      vim.keymap.set("n", "D", window.delete_current,
-        { buffer = true, desc = "Delete/reject item or reply" })
-      vim.keymap.set("n", "R", window.reply_current,
-        { buffer = true, desc = "Reply to comment" })
-      vim.keymap.set("n", "E", window.edit_current,
-        { buffer = true, desc = "Edit comment body" })
-
-      local function source_undo(cmd)
-        return function()
-          local src = window.source_buf()
-          if not src or not vim.api.nvim_buf_is_valid(src) then return end
-          local src_win = vim.fn.bufwinid(src)
-          if src_win == -1 then return end
-          vim.api.nvim_win_call(src_win, function()
-            vim.cmd("silent! " .. cmd)
-          end)
-        end
-      end
-
-      vim.keymap.set("n", "u", source_undo("undo"),
-        { buffer = true, desc = "Undo in source buffer" })
-      vim.keymap.set("n", "<C-r>", source_undo("redo"),
-        { buffer = true, desc = "Redo in source buffer" })
+  vim.api.nvim_create_user_command("InlineReview", run_command, {
+    nargs    = "?",
+    range    = true,
+    desc     = "Inline review: toggle|open|close|next|prev|comment|addition|deletion|replacement",
+    complete = function(prefix)
+      return vim.tbl_filter(function(s)
+        return vim.startswith(s, prefix)
+      end, SUBCOMMANDS)
     end,
   })
 end

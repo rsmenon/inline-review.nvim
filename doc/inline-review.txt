@@ -11,10 +11,11 @@ CONTENTS                                            *inline-review-contents*
     3. Installation .......................... |inline-review-installation|
     4. Configuration ......................... |inline-review-configuration|
     5. Usage ................................. |inline-review-usage|
-    6. Annotation types ...................... |inline-review-annotations|
-    7. Keymaps ............................... |inline-review-keymaps|
-    8. Highlight groups ...................... |inline-review-highlights|
-    9. Storage format ........................ |inline-review-storage|
+    6. Commands .............................. |inline-review-commands|
+    7. Annotation types ...................... |inline-review-annotations|
+    8. Keymaps ............................... |inline-review-keymaps|
+    9. Highlight groups ...................... |inline-review-highlights|
+   10. Storage format ........................ |inline-review-storage|
 
 ==============================================================================
 1. INTRODUCTION                                              *inline-review*
@@ -66,6 +67,10 @@ inline_review.setup({opts})
                            Default: OS username.
     {animate}   `boolean`  Slide-in animation when opening the pane.
                            Default: false.
+    {keymaps}   `table`    Keymaps for source buffers (`keymaps.source`)
+                           and the review pane (`keymaps.pane`). Set any
+                           entry to `false` to disable it. Defaults are
+                           listed in |inline-review-keymaps|.
 
     Example: >lua
 
@@ -73,8 +78,15 @@ inline_review.setup({opts})
           width   = 50,
           author  = "alice",
           animate = true,
+          keymaps = {
+            source = {
+              jump_to_pane = false,   -- keep gd for LSP
+              toggle       = "<leader>rv",
+            },
+          },
         })
 <
+    Run `:checkhealth inline_review` to verify the setup.
 ==============================================================================
 5. USAGE                                                *inline-review-usage*
 
@@ -95,7 +107,8 @@ Basic workflow:
     6. Press `<leader>rp` to toggle the pane.
 
 When a file with existing annotations is opened, the pane opens
-automatically.
+automatically. While the pane is open, entering a different markdown or
+text file retargets the pane to that buffer.
 
 INPUT FLOAT ~
 
@@ -106,8 +119,36 @@ window near the cursor.
     - `<S-CR>` or `<C-j>` inserts a newline for multi-line input.
     - `<Esc>` or `q` cancels.
 
+    Note: many terminals send a plain `<CR>` for Shift-Enter, which
+    submits instead. `<C-j>` works in every terminal; `<S-CR>` needs
+    extended-key support (kitty, WezTerm, Ghostty; inside tmux also
+    `extended-keys`).
+
+Multi-line comment, reply, and edit input is stored in the endmatter (see
+|inline-review-endmatter|). Addition and replacement text is inline-only,
+so newlines are joined with spaces.
+
 ==============================================================================
-6. ANNOTATION TYPES                            *inline-review-annotations*
+6. COMMANDS                                        *inline-review-commands*
+
+                                                             *:InlineReview*
+:InlineReview [subcommand]
+
+    `toggle`        Toggle the review pane (default when no subcommand).
+    `open`          Open the review pane for the current buffer.
+    `close`         Close the review pane.
+    `next`          Jump to the next annotation (wraps around).
+    `prev`          Jump to the previous annotation (wraps around).
+
+    With a visual selection (`:'<,'>InlineReview {subcommand}`):
+
+    `comment`       Comment on the selection.
+    `addition`      Propose an addition at the end of the selection.
+    `deletion`      Propose deleting the selection.
+    `replacement`   Propose replacing the selection.
+
+==============================================================================
+7. ANNOTATION TYPES                            *inline-review-annotations*
 
 COMMENT                                       *inline-review-comment*
 
@@ -125,7 +166,8 @@ DELETION                                      *inline-review-deletion*
 
     Visual-select text, press `<leader>rd`. No input prompt. The selected
     text is marked for deletion with strikethrough. Use `A` to approve
-    (removes the text) or `D` to reject (keeps the text).
+    (removes the text) or `D` to reject (keeps the text). When an approved
+    deletion covers a whole line, the line itself is removed.
 
 REPLACEMENT                                   *inline-review-replacement*
 
@@ -145,22 +187,27 @@ and earlier lines are marked as deletions. On approve, the earlier lines
 lose their selected portions and the last line's old text is replaced.
 
 ==============================================================================
-7. KEYMAPS                                          *inline-review-keymaps*
+8. KEYMAPS                                          *inline-review-keymaps*
+
+All keymaps below are the defaults and can be changed or disabled through
+the `keymaps` field of |inline_review.setup()|. Set an entry to `false`
+to disable it.
 
 SOURCE BUFFER ~
                                               *inline-review-source-keymaps*
 
-These mappings are set on markdown and text buffers.
+These mappings are set on markdown and text buffers. Config keys are
+shown in parentheses (`keymaps.source`).
 
-    `<leader>rp`    Toggle review pane.
-    `<leader>rc`    (visual) Comment on selection.
-    `<leader>ra`    (visual) Propose addition.
-    `<leader>rd`    (visual) Propose deletion.
-    `<leader>rr`    (visual) Propose replacement.
+    `<leader>rp`    Toggle review pane. (`toggle`)
+    `<leader>rc`    (visual) Comment on selection. (`comment`)
+    `<leader>ra`    (visual) Propose addition. (`addition`)
+    `<leader>rd`    (visual) Propose deletion. (`deletion`)
+    `<leader>rr`    (visual) Propose replacement. (`replacement`)
     `gd`            Jump to the review pane card for the annotation
-                    under the cursor.
-    `]r`            Jump to next annotation (wraps around).
-    `[r`            Jump to previous annotation (wraps around).
+                    under the cursor. (`jump_to_pane`)
+    `]r`            Jump to next annotation (wraps). (`next_annotation`)
+    `[r`            Jump to previous annotation (wraps). (`prev_annotation`)
 
 While the review pane is open, `w`, `b`, and `e` motions skip over
 concealed markup characters.
@@ -169,19 +216,20 @@ REVIEW PANE ~
                                               *inline-review-pane-keymaps*
 
 These mappings are set on the review pane buffer (filetype `inline-review`).
+Config keys are shown in parentheses (`keymaps.pane`).
 
-    `j` / `k`       Move between cards and replies.
-    `gd`            Peek source location (keep focus in pane).
-    `<CR>`          Jump to source location.
-    `A`             Approve suggestion (apply the change).
-    `D`             Delete/reject annotation or reply.
-    `E`             Edit comment body.
-    `R`             Reply to comment or suggestion.
-    `u`             Undo in source buffer.
-    `CTRL-R`        Redo in source buffer.
+    `j` / `k`       Move between cards and replies. (`next` / `prev`)
+    `gd`            Peek source location, keep focus in pane. (`peek`)
+    `<CR>`          Jump to source location. (`jump`)
+    `A`             Approve suggestion (apply the change). (`approve`)
+    `D`             Delete/reject annotation or reply. (`delete`)
+    `E`             Edit comment body. (`edit`)
+    `R`             Reply to comment or suggestion. (`reply`)
+    `u`             Undo in source buffer. (`undo`)
+    `CTRL-R`        Redo in source buffer. (`redo`)
 
 ==============================================================================
-8. HIGHLIGHT GROUPS                              *inline-review-highlights*
+9. HIGHLIGHT GROUPS                              *inline-review-highlights*
 
 All groups are defined with `default = true`. Your colorscheme takes
 precedence. Override any group after setup or in your colorscheme: >lua
@@ -207,7 +255,7 @@ precedence. Override any group after setup or in your colorscheme: >lua
     `InlineReviewPaneBg`           NormalFloat        Review pane background
 
 ==============================================================================
-9. STORAGE FORMAT                                    *inline-review-storage*
+10. STORAGE FORMAT                                   *inline-review-storage*
 
 Annotations are stored directly in the file using CriticMarkup delimiters
 with an ID reference. The markup is concealed in normal mode.
@@ -243,6 +291,21 @@ Metadata is stored in a YAML block at the end of the file, separated by
 <
 The endmatter is folded out of view while the review pane is open.
 
+Single-line comment bodies live inline in the `{>>body<<}` markup. A body
+containing newlines is stored in the endmatter `body:` field instead (as
+a YAML block scalar), with the inline markup carrying only the anchor: >
+
+    {==anchor==}{#c1}
+
+    ---
+    comments:
+      c1:
+        body: |
+          first line
+          second line
+        by: alice
+        at: 2025-01-15T10:30:00.000Z
+<
 REPLIES ~
 
 Replies are comment entries with a `re` field pointing to their parent: >

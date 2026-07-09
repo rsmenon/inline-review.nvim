@@ -121,7 +121,7 @@ suggestions:
 - Field order within an entry: `body`, `by`, `at`, `re`, `status`, `resolved`. Omit fields that are absent.
 - Indentation: section at 0, ID at 2 spaces, fields at 4 spaces.
 - Timestamps: UTC ISO 8601 with `.000Z` — `%Y-%m-%dT%H:%M:%S.000Z`.
-- `body` field: only present on replies (entries with `re:`). Top-level comment bodies go inline as `{>>body<<}`.
+- `body` field: present on replies (entries with `re:`). Top-level comment bodies go inline as `{>>body<<}` when single-line; a body containing newlines goes in the endmatter `body:` field instead (block scalar), with the inline markup carrying only the anchor: `{==anchor==}{#c1}`.
 - `re` field: points to the parent ID for replies. Nested replies point to the reply they respond to.
 - Quoting: values containing `: # {} [] , & * ! | > ' "` or starting with `- ?` must be double-quoted. Backslashes and double quotes inside are escaped.
 - Multi-line values: use YAML block scalar `|` with continuation lines indented to 6 spaces.
