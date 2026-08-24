@@ -21,7 +21,10 @@ a review pane.
 **File type restriction**: only operate on `.md` and `.txt` files. If the target
 file is any other type, decline and suggest a different review approach.
 
-Use `claude` as the author name on all annotations.
+**Author name**: use your own agent name, lowercased and without spaces (e.g. the
+name of the assistant or tool you run as). If you don't have one, use `agent`. Use
+the same author string for every annotation you write in a session. The examples
+below use `agent` as a placeholder — substitute your own.
 
 ## Annotation types
 
@@ -101,16 +104,16 @@ place. If not, append one.
 ---
 comments:
   c1:
-    by: claude
+    by: agent
     at: 2025-01-15T10:30:00.000Z
   c2:
     body: good point
-    by: claude
+    by: agent
     at: 2025-01-15T11:00:00.000Z
     re: c1
 suggestions:
   s1:
-    by: claude
+    by: agent
     at: 2025-01-15T10:31:00.000Z
 ```
 
@@ -173,7 +176,7 @@ Keep disagreement replies brief — one or two sentences stating the reason.
 comments:
   c5:
     body: "Keeping the original phrasing — it matches the terminology in the spec."
-    by: claude
+    by: agent
     at: 2025-01-15T12:00:00.000Z
     re: s2
 ```
